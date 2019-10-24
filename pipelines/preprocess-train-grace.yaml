@@ -1,0 +1,70 @@
+# The first step clones repo
+# The second step execute codes from the repo
+# ephemeral volume used by the workflow is deleted in the end
+
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: coinflip-
+spec:
+  entrypoint: ds-workflow
+  volumeClaimTemplates:
+  - metadata:
+      name: workdir
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 50000  # 50Mb
+
+  templates:
+  - name: ds-workflow
+    steps:
+    - - name: clone
+        template: git-clone
+        arguments:
+          parameters:
+            - name: token
+              value: "<GITHUB_TOKEN>"
+    - - name: preprocess
+        template: run-python-script
+        arguments:
+          parameters:
+            - name: path
+              value: "pipelines/src/preprocessing.py"
+    - - name: train
+        template: run-python-script
+        arguments:
+          parameters:
+            - name: path
+              value: "pipelines/src/train.py"
+
+  - name: git-clone
+    inputs:
+      parameters:
+        - name: token
+    container:
+      image: golang:1.10
+      command: [sh, -c]
+      args: ["export GIT_DISCOVERY_ACROSS_FILESYSTEM=1 &&
+              git clone https://oauth2:{{inputs.parameters.token}}@<GIT_REPO>.git &&
+              cd <GIT_REPO> && ls"]
+      volumeMounts:
+        - name: workdir
+          mountPath: /mnt/src
+      workingDir: /mnt/src
+
+  - name: run-python-script
+    inputs:
+      parameters:
+        - name: path
+    script:
+      # nexosis/ml-base https://github.com/Nexosis/alpine-xgboost
+      # fastgenomics/sklearn:0.19.1-p36-v5
+      image: nexosis/ml-base  # image with pre-installed libs
+      command: [sh, -c]
+      args: ["pip3 install joblib && cd <GIT_REPO> && ls && python3 {{inputs.parameters.path}}"]
+      volumeMounts:
+        - name: workdir
+          mountPath: /mnt/src
+      workingDir: /mnt/src
